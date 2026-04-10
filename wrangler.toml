@@ -1,0 +1,29 @@
+name            = "mehfil-relay"
+main            = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# ─── KV namespace ─────────────────────────────────────────────────────────────
+# Create the namespace first, then paste the IDs here:
+#
+#   wrangler kv:namespace create MEHFIL_KV
+#   wrangler kv:namespace create MEHFIL_KV --preview
+#
+[[kv_namespaces]]
+binding    = "KV"
+id         = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+# Do NOT put the real token here. Set it via:
+#
+#   wrangler secret put AUTH_TOKEN
+#
+# Leave AUTH_TOKEN unset in env to run an open relay (dev/testing only).
+
+# ─── Routes (optional) ────────────────────────────────────────────────────────
+# Uncomment and fill in to serve on a custom subdomain:
+# routes = [{ pattern = "relay.example.com/*", zone_name = "example.com" }]
+
+# ─── Limits ───────────────────────────────────────────────────────────────────
+[limits]
+cpu_ms = 50
