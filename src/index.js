@@ -68,15 +68,16 @@ async function router(request, env) {
   }
 
   // All other endpoints require auth.
-  if (!checkAuth(request, env)) {
+  if (!await checkAuth(request, env)) {
     return jsonResp({ error: "Unauthorized" }, 401);
   }
 
-  if ((m = path.match(/^\/ws\/([^/]{1,128})\/envelopes$/))) {
+  // Tightened wsId regex — alphanumeric + hyphen/underscore only, 8–128 chars.
+  if ((m = path.match(/^\/ws\/([A-Za-z0-9_-]{8,128})\/envelopes$/))) {
     if (method === "PUT") return putEnvelope(request, env, m[1]);
     if (method === "GET") return getEnvelopes(env, url, m[1]);
   }
-  if ((m = path.match(/^\/ws\/([^/]{1,128})\/cursor$/)) && method === "GET") {
+  if ((m = path.match(/^\/ws\/([A-Za-z0-9_-]{8,128})\/cursor$/)) && method === "GET") {
     return getCursor(env, m[1]);
   }
   if (path === "/pairing" && method === "POST") {
@@ -88,18 +89,23 @@ async function router(request, env) {
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
-function checkAuth(request, env) {
+/**
+ * Constant-time auth check via SHA-256 digest comparison.
+ * Hashing both sides first equalises their lengths so the loop always runs
+ * 32 iterations regardless of input length — no length oracle.
+ */
+async function checkAuth(request, env) {
   if (!env.AUTH_TOKEN) return true; // open mode — dev/testing only
   const auth = request.headers.get("Authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  return timingSafeEqual(token, env.AUTH_TOKEN);
-}
-
-/** Constant-time string compare to resist timing attacks. */
-function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(token)),
+    crypto.subtle.digest("SHA-256", enc.encode(env.AUTH_TOKEN)),
+  ]);
+  const av = new Uint8Array(a), bv = new Uint8Array(b);
   let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (let i = 0; i < 32; i++) diff |= av[i] ^ bv[i];
   return diff === 0;
 }
 
@@ -109,7 +115,9 @@ function timingSafeEqual(a, b) {
 async function putEnvelope(request, env, wsId) {
   const body = await request.arrayBuffer();
   if (body.byteLength === 0) return jsonResp({ error: "Empty body" }, 400);
-  if (body.byteLength > 1_048_576) return jsonResp({ error: "Envelope too large (max 1 MB)" }, 413);
+  // Mehfil envelopes are padded to exactly 1 KB; 4 KB gives headroom for
+  // any future framing while still rejecting bloat.
+  if (body.byteLength > 4_096) return jsonResp({ error: "Envelope too large (max 4 KB)" }, 413);
 
   // Derive a monotonically-increasing, lexicographically-sortable key.
   const ts   = Date.now().toString().padStart(16, "0");
@@ -186,6 +194,10 @@ async function postPairing(request, env) {
   }
   if (!payload || typeof payload !== "string") {
     return jsonResp({ error: "Missing payload" }, 400);
+  }
+  // Encrypted invite payloads are small; 64 KB is a very generous ceiling.
+  if (payload.length > 65_536) {
+    return jsonResp({ error: "Payload too large (max 64 KB)" }, 413);
   }
   const ttl = Math.min(Math.max(Number(ttl_ms) || 300_000, 60_000), 600_000);
 
